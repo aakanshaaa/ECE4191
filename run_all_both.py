@@ -1,15 +1,3 @@
-# ------ To do list ------
-# Set this up for the right motor
-# Calibrate intervals at 10cm intervals from 0.3 - 1 for each motor
-# Make a function that can make both motors turn at once and move in a straight line
-# Make a function to spin
-# Make a function to return home (turn angle, then drive x distance) (Navigation)
-# Make sure that we can calculate the distance from the start point to the current location (Navigation
-
-### UPDATE PINS AFTER RECHECKING WIRES
-
-# ------ Start the encoder recording (left motor) ------
-
 # Imports
 import time
 import RPi.GPIO as GPIO # importing module to work with the raspberry pis GPIO pins
