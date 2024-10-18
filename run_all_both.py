@@ -15,7 +15,7 @@ motor_B_in1 = 18  # Left motor
 motor_B_in2 = 23
 motor_B_en = 13
 
-motor_C = 2
+motor_C = 4
 
 
 # Set GPIO modes
