@@ -27,7 +27,7 @@ motor_B_in1 = 18  # Left motor
 motor_B_in2 = 23
 motor_B_en = 13
 
-motor_C = 19
+motor_C = 2
 
 
 # Set GPIO modes
@@ -120,7 +120,6 @@ def control_motor(motor, direction):
     elif motor == 'C':
         GPIO.output(motor_C, GPIO.HIGH)
 
-
 # Enable motors with PWM and control speed
 def enable_motor_pwm(motor, speed):
     if motor == 'A':  # Right motor
@@ -133,9 +132,6 @@ def enable_motor_pwm(motor, speed):
         pwm_L.start(0)
         pwm_L.ChangeDutyCycle(speed)
         return pwm_L
-
-
-
 
 # Stop all motors by setting enable pins to LOW
 def stop_all_motors(pwm_instance):
@@ -171,8 +167,6 @@ def drop(ball_dist):
 
     GPIO.output(motor_C, GPIO.LOW)
     print("[motors stopped]")
-
-
 
 # Turns on all motors for ball collection
 def move_forward_collect(ball_dist, x, y, robot_angle): 
@@ -221,7 +215,8 @@ def move_forward_collect(ball_dist, x, y, robot_angle):
 
     return x,y
 
-def move_forward(ball_dist, x, y, robot_angle): #x and y necessary?
+# drives forward
+def move_forward(ball_dist, x, y, robot_angle): 
 
     # Speed
     speed = 100
@@ -265,6 +260,52 @@ def move_forward(ball_dist, x, y, robot_angle): #x and y necessary?
 
     return x,y
 
+# drives backward
+def move_backward(ball_dist, x, y, robot_angle): 
+
+    # Speed
+    speed = 100
+
+    ball_dist = ball_dist*100 #Value is passed in m, converts it into cm
+    # Calculate time to turn on motors
+    d = ball_dist #[cms]
+    v = 26.4 #[cm/s]
+    overshoot = 11.3 #[cm]
+    t = (d - overshoot) / v # [s]
+
+    # Enable motor pwm
+    pwm_L = enable_motor_pwm('A', speed)
+    pwm_R = enable_motor_pwm('B', speed)
+    print("[motors enabled]")
+
+    # Start motors moving forward
+    control_motor('A', 'backward')
+    control_motor('B', 'backward')
+    print("[motors started]")
+
+    # Sleep time
+    time_motor_on = t
+    time.sleep(time_motor_on)
+    time.sleep(1.5) #Ensure that the robot / motor has stopped motion
+
+    # Stop motors 
+    stop_all_motors(pwm_L)
+    stop_all_motors(pwm_R)
+    print("[motors stopped]")
+
+    # Additional information
+    print(f"Position after {time_motor_on}[s]: {position_left}[cms], {position_right}[cms]")
+    
+    # Find distance travelled
+    mean_distance = (position_left + position_right)/2
+    
+    # Find new position & angle
+    x += np.cos(np.deg2rad(robot_angle))*mean_distance #
+    y += np.sin(np.deg2rad(robot_angle))*mean_distance
+
+    return x,y
+
+#rotates robot
 def spin(ball_angle, x, y, robot_angle):
 
     # Speed
@@ -281,10 +322,6 @@ def spin(ball_angle, x, y, robot_angle):
     pwm_R = enable_motor_pwm('B', speed)
     print("[motors enabled]")
 
-    # Start motors moving forward
-    #control_motor('A', 'forward')
-    #control_motor('B', 'forward')
-    #print("[motors started]")
     
     if ball_angle > 0:   #Spin left
         control_motor('A', 'backward')
@@ -315,7 +352,6 @@ def spin(ball_angle, x, y, robot_angle):
     robot_angle += ball_angle
 
     return robot_angle
-
 # ----- Code from CV stuff -----
 def capture_img(camera_index = 0):
     global cap
@@ -430,37 +466,237 @@ def locate_tennis_ball(img):
             
     return np.array(middle_bottom_pixel)
 
-def dist_and_rot_to_target(target_location, img_shape = 320): # can separate into individual functions
+def dist_rot_to_target(target_location): 
     
-    #using these for now
-    calibration_points = [
-    (404, 240, 0.5, 20),   # Example: Pixel (100, 200) corresponds to 5 meters and 30 degrees
-    (390, 100, 1, 15),   # Example: Pixel (200, 200) corresponds to 3 meters and 45 degrees
-    (380, 70, 1.5, 12),   # Example: Pixel (150, 250) corresponds to 4 meters and 60 degrees
-    (375, 55, 2.0, 11)    # Example: Pixel (250, 250) corresponds to 2 meters and 75 degrees
-    ]
+    target_locations = np.array(target_locations)
 
-    # Extract pixel coordinates and corresponding real-world distances and angles
-    pixel_coords = np.array([[p[0], p[1]] for p in calibration_points])
-    distances = np.array([p[2] for p in calibration_points])
-    angles = np.array([p[3] for p in calibration_points])
+    # homography for pixel to world coordinate conversion
+    h = np.array([[0.253740610646319,1.32996851572853,-2122.36980102190],
+    [1.19833484185468,0.00788378185419525,-762.669172803865],
+    [0.103406288700081,-6.15470279781376,597.349215854788]])
+    #
+    image_coords = np.hstack([target_locations,np.ones([target_locations.shape[0],1])])
 
-    # Try to use griddata for linear interpolation
-    predicted_distance = griddata(pixel_coords, distances, target_location, method='linear')
-    predicted_angle = griddata(pixel_coords, angles, target_location, method='linear')
-    # print('grid data angle',pixel_coords, angles, target_location)
+    world_coords = h@image_coords.T
+    x = np.divide(world_coords[0,:],world_coords[2,:])
+    y = np.divide(world_coords[1,:],world_coords[2,:])
 
-    # If griddata returns NaN, use Rbf for extrapolation
-    if np.isnan(predicted_distance) or np.isnan(predicted_angle):
-        # Create Rbf interpolators for distance and angle
-        rbf_distance = Rbf(pixel_coords[:, 0], pixel_coords[:, 1], distances, function='linear')
-        rbf_angle = Rbf(pixel_coords[:, 0], pixel_coords[:, 1], angles, function='linear')
-
-        # Predict distance and angle for the target pixel using Rbf
-        predicted_distance = rbf_distance(target_location[0], target_location[1])
-        predicted_angle = rbf_angle(target_location[0], target_location[1])
+    dist = np.round(np.sqrt(np.square(x)+np.square(y)),2)
+    angle= np.round(np.degrees(np.arctan2(y,x)),2)
     
-    return predicted_distance, predicted_angle
+    return dist, angle
+
+def locate_tennis_box_mask(img):
+    
+    middle_bottom_pixel = []
+    box_rgb = [165, 150,100]#nnis_ball_rgb = [223,255,79] [160, 158, 56]
+    #mask for green first
+
+    image_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+    # Extract the H, S, and V channels
+    h_channel, s_channel, v_channel = cv2.split(image_hsv)
+
+    # Normalize the H and S channels to a range of 0-1 for comparison
+    h_channel_norm = h_channel / 180.0  # Hue is in the range [0, 180] in OpenCV
+    s_channel_norm = s_channel/ 255.0
+
+    # Convert the tennis ball RGB to HSV
+    box_hsv = cv2.cvtColor(np.uint8([[box_rgb]]), cv2.COLOR_RGB2HSV)[0][0]
+    # tennis_ball_hsv[1] = np.clip(tennis_ball_hsv[1]*5,0,255)
+
+    # Normalize the tennis ball HSV value
+    box_hue_norm = box_hsv[0] / 180.0
+    box_saturation_norm = box_hsv[1]/ 255.0
+
+    # Define tolerance
+    hue_tolerance = 1/30
+    saturation_tolerance = 0.6
+
+    # Create a mask for pixels within the tolerance of the tennis ball hue and saturation
+    mask = (
+        (np.abs(h_channel_norm - box_hue_norm) <= hue_tolerance) &
+        (np.abs(s_channel_norm - box_saturation_norm) <= saturation_tolerance)
+    )
+
+    
+    grey_img = cv2.blur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY),(15,15))
+    masked_image = np.zeros_like(grey_img)
+    masked_image[mask] = grey_img[mask]
+    
+    blurred_image=  cv2.blur(masked_image, (15,15))
+
+    return blurred_image#np.array(middle_bottom_pixel)
+
+def find_box(img_mask):
+    ret,thresh = cv2.threshold(img_mask,50,255,0)
+    contours,hierarchy = cv2.findContours(thresh, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+    #print("Number of contours detected:",len(contours))
+    XN=0
+    YN=0
+    CN=0
+    arc=0.01
+    for cnt in contours:
+            XN=0
+            YN=0
+            CN=0
+            #approx= cv2.approxPolyN(7,
+            approx = cv2.approxPolyDP(cnt, arc*cv2.arcLength(cnt, True), True)
+            #approx = cv2.approxPolyDP(7, 0.01*cv2.arcLength(cnt, True), True)
+            for i in range(len(approx)):
+                XN=XN+approx[i][0][0]
+                YN=YN+approx[i][0][1]
+                CN=CN+1
+            (x,y)=cnt[0,0]
+            print(CN)
+            if len(approx) >= 10:
+                arc=arc+0.005
+            if len(approx) >= 5:
+                img = cv2.drawContours(img, [approx], -1, (0,0,255), 8)
+
+    x_values = [x[0] for x in approx]
+    x_average = sum(x_values) / len(x_values)
+    
+
+    centreline = len(img_mask[0])/2
+    print(centreline)
+    box_found = False
+
+    margin = 100  
+    if(sum(img_mask)>100):
+        print("too close") 
+
+        #move a bit closer and deposit ball
+        x,y = move_forward(0.05,0,0,0)
+        drop()
+        box_found = True
+
+    elif int(XN/CN)<(centreline+margin) and int(XN/CN)>(centreline-margin):
+        print("print centre")
+        box_state = "centre"
+        # move forward 0.20m
+        x,y = move_forward(0.2,0,0,0)
+    
+    elif int(XN/CN) > centreline:
+        print("print right")
+        #rotate right
+        ang = spin(-20, 0, 0, 0)
+        
+    elif int(XN/CN) < centreline:
+        print("print left")
+        ang = spin(20, 0, 0, 0)
+    return box_found
+
+def create_binary_mask(image_shape, upper_point, lower_point):
+    # Create a blank mask of zeros (same height and width as the image)
+    mask = np.ones(image_shape[:2], dtype=np.uint8)
+
+    # Get the height and width of the image
+    height, width = image_shape[:2]
+
+    # Create an array of all the x coordinates (columns)
+    x_coords = np.arange(width)
+
+    # Calculate the slope and intercept of the line using the two points
+    x1, y1 = upper_point
+    x2, y2 = lower_point
+    
+    if x1 != x2:  # To avoid division by zero
+        slope = (y2 - y1) / (x2 - x1)
+        intercept = y1 - slope * x1
+    else:
+        # If x1 == x2, the line is vertical, set slope to infinity
+        slope = np.inf
+
+    # Create the mask where all points below the line are 1, and above are 0
+    for x in x_coords:
+        if slope != np.inf:
+            # y = mx + c (equation of the line)
+            y_line = np.min([int(slope * x + intercept),image_shape[0]])
+            if y_line <= 0:
+                y_line = 0
+        else:
+            # For a vertical line, y values should simply compare with x1
+            y_line = y1
+
+        # All pixels below this line (y > y_line) are set to 1
+        mask[0:y_line, x] = 0
+
+    return mask
+
+def linefindhough(img):
+
+    # line_mask = np.zeros(img.shape)
+    ## threshold image to line colour
+    threshold = 190
+
+    # where img above or between threshold, make white else black
+    t_img = np.where(img > threshold,35,0)
+
+
+    # # Edge detection
+    #edges = cv2.Canny(img.astype(np.uint8)*255,190,220)
+    edges = cv2.Canny(t_img.astype(np.uint8)*255,20,50)
+
+    # This returns an array of r and theta values
+    lines = cv2.HoughLines(edges, 1, np.deg2rad(1), 150)
+
+    # The below for loop runs till r and theta values
+    # are in the range of the 2d array
+    img_rows = img.shape[0]
+    img_cols = img.shape[1]
+    line_mask = np.ones([img_rows,img_cols])
+    if lines is not None:
+        
+        mask_sum = img_rows*img_cols
+        max_x = 0
+        min_x = img_cols
+        max_y = 0
+        min_y = img_rows
+        line_count = 0
+        for r_theta in lines:
+            if line_count <=3:
+                arr = np.array(r_theta[0], dtype=np.float64)
+                r, theta = arr
+                # Stores the value of cos(theta) in a
+                a = np.cos(theta)
+
+                # Stores the value of sin(theta) in b
+                b = np.sin(theta)
+
+                # x0 stores the value rcos(theta)
+                x0 = a*r
+
+                # y0 stores the value rsin(theta)
+                y0 = b*r
+
+                # x1 stores the rounded off value of (rcos(theta)-1000sin(theta))
+                x1 = int(x0 + 1000*(-b))
+
+                # y1 stores the rounded off value of (rsin(theta)+1000cos(theta))
+                y1 = int(y0 + 1000*(a))
+
+                # x2 stores the rounded off value of (rcos(theta)+1000sin(theta))
+                x2 = int(x0 - 1000*(-b))
+
+                # y2 stores the rounded off value of (rsin(theta)-1000cos(theta))
+                y2 = int(y0 - 1000*(a))
+
+                if y1 < y2:
+                    upper_point = [x2,y2]
+                    lower_point = [x1,y1]
+                else:
+                    lower_point = [x2,y2]
+                    upper_point = [x1,y1]
+
+                temp_line_mask = create_binary_mask(img.shape,upper_point,lower_point)
+                if np.sum(temp_line_mask) < mask_sum:
+                    mask_sum = np.sum(temp_line_mask)
+                    line_mask = temp_line_mask
+            else:
+                break
+
+    return line_mask
 
 def update_robot_position(t_matrix,dist = 0, rot =0):
     
@@ -490,115 +726,139 @@ def goal_machine():
     robot_angle = 0
     inf_loop_check1 = 0
     inf_loop_check2 = 0
-
      
     t_matrix = np.eye(3) #may want to change to 90 rotation as initial position
     t_matrix =  update_robot_position(t_matrix,dist = 0, rot = np.deg2rad(90)) #starts 90 degrees from base x axis
+    
+    while True: #continuously run loop until break
+        if goal == 'ball': # while locating and navigating to the ball
 
-    while goal == 'ball': # while locating and navigating to the ball
-
-        inf_loop_check1+=1
-        if inf_loop_check1 > 10:
-            print("Can't navigate to ball")
-            return
-
-        rotation_search = 0 # for rotating robot to find balls - at start find balls on spot
-        distance_search = 0 # for rotating robot to find balls - at start find balls on spot
-        
-        total_dist = 0 #track the distance travelled searching for ball before rotating
-        total_rot = 0 # track rotation while finding a ball
-        max_distance_search = 2 #metres travelled before rotating
-        
-        while not ball_locations: # find tennis ball if ball locations is none
-   
-            #rotate and move robot by rotation and distance variable (initially 0)
-            #move_robot(rot,dist)
-            robot_angle = spin(rotation_search, robot_x, robot_y, robot_angle)
-            robot_x,robot_y = move_forward(distance_search , robot_x, robot_y, robot_angle)
-            t_matrix = update_robot_position(t_matrix,dist = distance_search, rot =rotation_search) 
-
-            total_rot += rotation_search # track total rotation
-            total_dist += distance_search
-            distance_search = 1 #if the loop runs again, the robot will move the specified distance
-            rotation_search = 0 #just reset the search distance every iteration until it reaches dist_threshold
-            
-            # Capture an image
-            img = capture_img(0)
-
-            # Preprocess image (correct for distortion [in bgr])
-            img_processed = process_img(img)
-        
-            # Find ball location in pixels (segment, find boxes, some additional logic)
-            ball_locations = locate_tennis_ball(img_processed)
-
-            if total_dist >= max_distance_search:
-                distance_search = 0 # stop moving until ball found or rotations complete
-                rotation_search =  90 #rotate until ball found or full spin
-
-                if total_rot >= 360:
-                    total_dist = 0 #reset total distance
-                    total_rot = 0 #reset total rotation
-                    distance_search = 1 #keep going forward
-                    rotation_search = 0 #no more spinning until max distance reached again
-          
-            inf_loop_check2+=1
-            if inf_loop_check2 > 20:
-                print("Can't find ball")
+            inf_loop_check1+=1
+            if inf_loop_check1 > 10:
+                print("Can't navigate to ball")
                 return
-            ## END OF inner loop to find a tennis ball
-      
-        ## if ball locations - if there is a ball detected
-        centrepoint = [img.shape[0]/2,img.shape[1]]
-        distances = dist_from_centre(centrepoint,ball_locations)
-        ball_locations = ball_locations[np.argsort(distances)] #hardcode to choose the nearest circle
+
+            rotation_search = 0 # for rotating robot to find balls - at start find balls on spot
+            distance_search = 0 # for rotating robot to find balls - at start find balls on spot
+            
+            total_dist = 0 #track the distance travelled searching for ball before rotating
+            total_rot = 0 # track rotation while finding a ball
+            max_distance_search = 2 #metres travelled before rotating
+            
+            while ball_locations.shape[0]<1: # find tennis ball if ball locations is none
+    
+                #rotate and move robot by rotation and distance variable (initially 0)
+                #move_robot(rot,dist)
+                robot_angle = spin(rotation_search, robot_x, robot_y, robot_angle)
+                robot_x,robot_y = move_forward(distance_search , robot_x, robot_y, robot_angle)
+                t_matrix = update_robot_position(t_matrix,dist = distance_search, rot =rotation_search) 
+
+                total_rot += rotation_search # track total rotation
+                total_dist += distance_search
+                distance_search = 1 #if the loop runs again, the robot will move the specified distance
+                rotation_search = 0 #just reset the search distance every iteration until it reaches dist_threshold
+                
+                # Capture an image
+                img = capture_img(0)
+
+                # Preprocess image (correct for distortion [in bgr])
+                img_processed = process_img(img)
+
+                # Get mask for valid court boundaries
+                line_mask = linefindhough(img_processed)
+
+                # Find ball location in pixels (segment, find boxes, some additional logic)
+                ball_locations = locate_tennis_ball(img_processed)
+
+                if total_dist >= max_distance_search:
+                    distance_search = 0 # stop moving until ball found or rotations complete
+                    rotation_search =  90 #rotate until ball found or full spin
+
+                    if total_rot >= 360:
+                        total_dist = 0 #reset total distance
+                        total_rot = 0 #reset total rotation
+                        distance_search = 1 #keep going forward
+                        rotation_search = 0 #no more spinning until max distance reached again
+            
+                inf_loop_check2+= 1
+                if inf_loop_check2 > 20:
+                    print("Can't find ball")
+                    return
+                
+                if ball_locations.shape[0]>0:
+                    valid_locs = []
+                for loc in ball_locations:
+                    r,c, = loc[0],loc[1]
+                    if line_mask[r,c]:
+                        valid_locs.append(loc)
+
+                ball_locations = np.array(valid_locs)
+                ## END OF inner loop to find a tennis ball
         
-        # get distance and rotation (transform pixels into a distance and degrees/rotation)
-        dist, rot = dist_and_rot_to_target(ball_locations[0])
+            ## if ball locations - if there is a ball detected
+            centrepoint = [img.shape[0]/2,img.shape[1]]
+            distances = dist_from_centre(centrepoint,ball_locations)
+            ball_locations = ball_locations[np.argsort(distances)] #hardcode to choose the nearest circle
+            
+            # get distance and rotation (transform pixels into a distance and degrees/rotation)
+            dist, rot = dist_rot_to_target(ball_locations[0])
 
-        #correct direction of rotation - need to check if correct once calibrated
-        if (ball_locations[0][0] > img.shape[0]/2): 
-            rot = -rot
+            print('distance:',dist,'rotation:',rot)
 
-        print('distance:',dist,'rotation:',rot)
+            # determine the distance the robot will travel before finding tennis balls again
+            if dist >= 1:
+                dist = 1 #cap distance travelled to 1m
 
-        # determine the distance the robot will travel before finding tennis balls again
-        if dist >= 1:
-            dist = 1 #cap distance travelled to 1m
+            elif 0.75 < dist < 1: #can reduce the 0.75 to slightly above detection distance
+                dist = 0.5 #only travel 0.5m
 
-        elif 0.75 < dist < 1: #can reduce the 0.75 to slightly above detection distance
-            dist = 0.5 #only travel 0.5m
+            else: #in collecting range
+                dist += 0.1 #go extra 10cm to 'collect'
+                ball_collected = True
 
-        else: #in collecting range
-            dist += 0.1 #go extra 10cm to 'collect'
-            ball_collected = True
+            if abs(rot) > rot_threshold:
+                rot = 0
 
-        if abs(rot) > rot_threshold:
-            rot = 0
+            # pass new dist and rot to robot moving function
+            robot_angle = spin(rot, robot_x, robot_y, robot_angle)
+            robot_x,robot_y = move_forward(dist , robot_x, robot_y, robot_angle)
 
-        # pass new dist and rot to robot moving function
-        robot_angle = spin(rot, robot_x, robot_y, robot_angle)
-        robot_x,robot_y = move_forward(dist , robot_x, robot_y, robot_angle)
+            #might change to use actual dist and rot from encoders
+            t_matrix = update_robot_position(t_matrix,dist = dist, rot =rot) 
+    
+            ## return back after ball is 'collected'
+            if ball_collected:
+                goal = 'box'
 
-        #might change to use actual dist and rot from encoders
-        t_matrix = update_robot_position(t_matrix,dist = dist, rot =rot) 
- 
-        ## return back after ball is 'collected'
-        if ball_collected:
-            goal = 'home'
+            ## END OF OUTER LOOP
 
-        ## END OF OUTER LOOP
+        if goal == 'box':
+            box_found = False
+            while box_found == False:
+                box_img = capture_img(0)
+                processed_box_img = process_img(box_img)
+                img_mask = locate_tennis_box_mask(img_processed)
+                box_found = find_box(img_mask)
 
-    if goal == 'home':
-      
-        ## or find using the continuously updating robot x,y and angle
-        distance_home = np.linalg.norm([t_matrix[0,2],t_matrix[1,2]])
-        rotation_home = np.degrees(np.arctan2(-t_matrix[1,2],-t_matrix[0,2])- np.arctan2(t_matrix[1,0],t_matrix[0,0])) #double check this
+            # once box found, deposit ball and reverse and rotate so that more balls can be found
+            drop()
+            robot_x,robot_y = move_backward(0.1,robot_x,robot_y,robot_angle)
+            robot_angle = spin(180,robot_x,robot_y,robot_angle)
+            goal = 'ball' 
+
+
+
+        if goal == 'home': #not fully integrated
         
-        # navigate to start position
-        spin(rotation_home, robot_x, robot_y, robot_angle)
-        move_forward(distance_home , robot_x, robot_y, robot_angle)
+            ## or find using the continuously updating robot x,y and angle
+            distance_home = np.linalg.norm([t_matrix[0,2],t_matrix[1,2]])
+            rotation_home = np.degrees(np.arctan2(-t_matrix[1,2],-t_matrix[0,2])- np.arctan2(t_matrix[1,0],t_matrix[0,0])) #double check this
+            
+            # navigate to start position
+            spin(rotation_home, robot_x, robot_y, robot_angle)
+            move_forward(distance_home , robot_x, robot_y, robot_angle)
 
-        return
+            break
     return
 
 
@@ -658,3 +918,5 @@ def goal_machine():
 # GPIO.cleanup()
 
             
+goal_machine()
+GPIO.cleanup()
